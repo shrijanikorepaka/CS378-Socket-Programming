@@ -4,16 +4,54 @@
 #include<sys/types.h>
 #include<netinet/in.h>
 #include<unistd.h>
+#include<vector>
+#include<sstream>
+#include<fstream>
 #define MYPORT 5000
 
 using namespace std;
 
-int main()
+int main(int argc,char *argv[])
 {
+    ifstream file(argv[1]);
+    if(!file){
+        cerr << "Error opening configuration file." << endl;
+        return 1;
+    }   
+    vector<vector<int>> config;
+    string line;
+    while(getline(file,line)){
+        stringstream ss(line);
+        vector<int>row;
+        int val;
+        while(ss>>val){
+            row.push_back(val);
+        }
+        if(!row.empty())
+        config.push_back(row);
+    }
+    for(int i=0;i<config.size();i++){
+        for(int j=0;j<config[i].size();j++){
+            cout<<config[i][j]<<" ";
+        }
+        cout<<endl;
+    }
+    int n=config.size();
+    vector<vector<int>> adj(n,vector<int>(n,-1));
+    for(int i=0;i<n;i++){
+        adj[i][i]=0;
+    }
+    for(int i=0;i<n;i++){
+        for(int j=i+1;j<n;j++){
+            adj[i][j]=config[i][j-i-1];
+            adj[j][i]=adj[i][j];
+        }
+    }
+    int client_sockets[26];
+    int cnt=0;
     int sockfd = socket(PF_INET, SOCK_STREAM, 0);
-
-    struct sockaddr_in my_addr;
-    struct sockaddr_in their_addr;
+  
+    struct sockaddr_in my_addr{};
 
     my_addr.sin_family = AF_INET;
     my_addr.sin_port = htons(MYPORT);
@@ -24,20 +62,24 @@ int main()
     bind(sockfd, (struct sockaddr *)&my_addr, sizeof(struct sockaddr));
 
     listen(sockfd, 10);
-
-    int sin_size = sizeof(struct sockaddr_in);
-
+    
+    cout << "Oracle waiting for VN...\n";
+    while(true){
+        struct sockaddr_in their_addr{};
+        socklen_t sin_size = sizeof(struct sockaddr_in);
     int new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
-
+    client_sockets[cnt]=new_fd;
+    cnt++;
+    cout<<"Connected to VN"<<endl;
     char buffer[1024];
-
-    int n = recv(new_fd, buffer, 1024, 0);
-
-    const char *msg = "Hello from server";
-
-    send(new_fd, msg, strlen(msg), 0);
-
-    close(new_fd);
+    int n=recv(new_fd,buffer,1024,0);
+    if(n>0){
+        cout<<"received: "<<buffer<<endl;
+    }
+    }
+    for(int i=0;i<cnt;i++){
+        close(client_sockets[i]);
+    }
     close(sockfd);
 
     return 0;
