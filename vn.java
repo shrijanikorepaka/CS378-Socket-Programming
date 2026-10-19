@@ -58,7 +58,12 @@ public class vn {
 
         System.out.println("Sent 6-byte CONNECT message");
     }
-
+    private void sendTestMessage() throws IOException {
+        OutputStream out = tcpSocket.getOutputStream();
+        out.write("HELLO FROM VN\n".getBytes());
+        out.flush();
+        System.out.println("Sent test message to ON");
+    }
     public void start() throws IOException {
         try {
             initializeUDP();
@@ -71,6 +76,9 @@ public class vn {
             // Your current on.cpp never sends a response.
             // Implement the receive/decode loop after adding
             // LINK-STATE sending to the ON.
+            sendTestMessage(); // temporary connection test
+
+            System.out.println("Test message sent.");
         } finally {
             if (tcpSocket != null) {
                 tcpSocket.close();
@@ -95,7 +103,6 @@ public class vn {
             vn.start();
         } catch (IOException | IllegalArgumentException e) {
             System.err.println("VN error: " + e.getMessage());
-            System.exit(1);
         }
     }
 }
