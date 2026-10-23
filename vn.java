@@ -4,6 +4,12 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.*;
 
+// javac vn.java
+// java vn <oracle-ip> <own-ip> <udp-port>
+// java vn <oracle-ip> <udp-port>
+
+// hostname -I     -> to find ip address
+
 public class vn {
     private static final int ORACLE_PORT = 5000;
     private static final int TUPLE_SIZE = 9;
@@ -32,7 +38,6 @@ public class vn {
     private final String oracleIP;
     private final String ownIP;
     private final int udpPort;
-    private final int oraclePort;
 
     private Socket tcpSocket;
     private DatagramSocket udpSocket;
@@ -47,23 +52,21 @@ public class vn {
 
     public vn(String oracleAddr, String ownIP, int udpPort) {
         String host = oracleAddr;
-        int port = ORACLE_PORT;
         int colon = oracleAddr.lastIndexOf(':');
 
         if(colon > 0) {
             host = oracleAddr.substring(0, colon);
-            port = Integer.parseInt(oracleAddr.substring(colon + 1));
         }
         this.oracleIP = host;
-        this.oraclePort = port;
         this.ownIP = ownIP;
         this.udpPort = udpPort;
     }
 
+    // Opens the local UDP socket
     private void initializeUDP() throws IOException {
         InetAddress localAddress = InetAddress.getByName(ownIP);
 
-        if (localAddress.getAddress().length != 4 || localAddress.isLoopbackAddress()){
+        if (localAddress.getAddress().length != 4){
             throw new IllegalArgumentException("Use a reachable, non-loopback IPv4 address");
         }
 
@@ -80,6 +83,7 @@ public class vn {
         System.out.println("UDP socket bound to " + ownIP + " : " + udpPort);
     }
 
+    // Establishes TCP connection to Oracle
     private void connectToOracle() throws IOException {
         tcpSocket = new Socket();
         tcpSocket.connect(
@@ -89,6 +93,7 @@ public class vn {
                 + oracleIP + ":" + ORACLE_PORT);
     }
 
+    // Sends node's IPv4 address and UDP port
     private void sendConnect() throws IOException {
         byte[] ip = InetAddress.getByName(ownIP).getAddress();
 
@@ -109,6 +114,7 @@ public class vn {
     }
 
     // LINK-STATE MESSAGE
+    // Reads Oracle messages over TCP
     private void oracleLoop() throws IOException {
         DataInputStream in = new DataInputStream(tcpSocket.getInputStream());
 
@@ -129,6 +135,7 @@ public class vn {
         }
     }
 
+    // Decodes binary neighbor entries into Java objects
     private List<Entry> parseEntries(ByteBuffer buf, int count) {
         List<Entry> list = new ArrayList<>();
         for (int i = 0; i < count; i++){
@@ -142,6 +149,7 @@ public class vn {
         return list;
     }
 
+    // Processes the local node's topology from the Oracle
     private void handleLinkState(byte[] payload) {
         ByteBuffer buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
         List<Entry> entries = parseEntries(buf, payload.length / TUPLE_SIZE);
@@ -179,7 +187,7 @@ public class vn {
     }
 
     // LSP
-
+    // Serializes the local topology into an LSP packet
     private byte[] buildLsp(int seq) {
         ByteBuffer buf = ByteBuffer.allocate(LSP_HEADER_SIZE + TUPLE_SIZE * myEntries.size());
         buf.order(ByteOrder.BIG_ENDIAN);
@@ -195,6 +203,7 @@ public class vn {
         return buf.array();
     }
 
+    // Sends the local LSP to the node's neighbors
     private void floodOwnLsp() {
         byte[] data;
         List<InetSocketAddress> targets = new ArrayList<>();
@@ -217,6 +226,7 @@ public class vn {
         }
     }
 
+    // Sends a UDP packet twice
     private void sendUdp (byte[] data, InetSocketAddress target) {
         for (int i = 0; i < LSP_COPIES; i++) {
             try {
@@ -227,6 +237,7 @@ public class vn {
         }
     }
 
+    // Listens for incoming UDP packets
     private void udpLoop() {
         byte[] buffer = new byte[4096];
         while (!udpSocket.isClosed()) {
@@ -248,6 +259,7 @@ public class vn {
         }
     }
 
+    // Validates, stores, and forwards received LSPs
     private void handleLSP(byte[] data, InetSocketAddress sender) {
         if (data.length < LSP_HEADER_SIZE) return;
 
@@ -287,6 +299,7 @@ public class vn {
         }
     }
 
+    // Resends local LSPs and prints the graph periodically
     private void periodicLoop() {
         while (true) {
             try {
@@ -331,6 +344,7 @@ public class vn {
     }
 
     // Main
+    // Initializes networking and starts the worker threads
     public void start() throws IOException {
         try {
             initializeUDP();
@@ -352,6 +366,7 @@ public class vn {
         }
     }
 
+    // Detects the local interface IP used to reach the Oracle
     private static String detectOwnIP(String oracleAddr) throws IOException {
         int colon = oracleAddr.lastIndexOf(':');
         String host = colon > 0 ? oracleAddr.substring(0, colon) : oracleAddr;
@@ -361,6 +376,7 @@ public class vn {
         }
     }
 
+    // Parses command-line arguments and starts the node
     public static void main(String[] args) {
         if (args.length != 2 && args.length != 3) {
             System.err.println("Usage: java VN <oracle-ip> <own-ip> <udp-port>");
