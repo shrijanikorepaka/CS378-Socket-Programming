@@ -112,7 +112,7 @@ int main(int argc,char *argv[])
 
     memset(&(my_addr.sin_zero), '\0', 8);
 
-    if(bind(sockfd, (struct sockaddr *)&my_addr, sizeof(struct sockaddr))<0){
+    if(bind(sockfd, (struct sockaddr *)&my_addr, sizeof(my_addr))<0){
         cerr<<"Bind failed"<<endl;
         return 1;
     }

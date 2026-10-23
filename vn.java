@@ -2,19 +2,60 @@ import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.*;
 
 public class vn {
     private static final int ORACLE_PORT = 5000;
+    private static final int TUPLE_SIZE = 9;
+    private static final int LSP_HEADER_SIZE = 7;
+    private static final long LSP_PERIOD_MS = 10_000;
+    private static final int LSP_COPIES = 2;
+
+    private static final class Entry {
+        final char id;
+        final byte[] ip;
+        final int port;
+        final int cost;
+
+        Entry(char id, byte[] ip, int port, int cost) {
+            this.id = id;
+            this.ip = ip;
+            this.port = port;
+            this.cost = cost;
+        }
+
+        InetSocketAddress address() throws UnknownHostException {
+            return new InetSocketAddress(InetAddress.getByAddress(ip), port);
+        }
+    }
 
     private final String oracleIP;
     private final String ownIP;
     private final int udpPort;
+    private final int oraclePort;
 
     private Socket tcpSocket;
     private DatagramSocket udpSocket;
 
-    public vn(String oracleIP, String ownIP, int udpPort) {
-        this.oracleIP = oracleIP;
+    private final Object lock = new Object();
+    private char myId = 0;
+    private int mySeq = 0;
+    private List<Entry> myEntries = new ArrayList<>();
+    private final Map<Character, InetSocketAddress> addrs = new HashMap<>();
+    private final Map<Character, Map<Character, Integer>> graph = new TreeMap<>();
+    private final Map<Character, Integer> lastSeq = new HashMap<>();
+
+    public vn(String oracleAddr, String ownIP, int udpPort) {
+        String host = oracleAddr;
+        int port = ORACLE_PORT;
+        int colon = oracleAddr.lastIndexOf(':');
+
+        if(colon > 0) {
+            host = oracleAddr.substring(0, colon);
+            port = Integer.parseInt(oracleAddr.substring(colon + 1));
+        }
+        this.oracleIP = host;
+        this.oraclePort = port;
         this.ownIP = ownIP;
         this.udpPort = udpPort;
     }
@@ -22,13 +63,21 @@ public class vn {
     private void initializeUDP() throws IOException {
         InetAddress localAddress = InetAddress.getByName(ownIP);
 
-        if (localAddress.getAddress().length != 4 || localAddress.isLoopbackAddress() || localAddress.isAnyLocalAddress()){
+        if (localAddress.getAddress().length != 4 || localAddress.isLoopbackAddress()){
             throw new IllegalArgumentException("Use a reachable, non-loopback IPv4 address");
         }
 
-        udpSocket = new DatagramSocket(new InetSocketAddress(localAddress, udpPort));
+        if (udpPort < 1 || udpPort > 65535) {
+            throw new IllegalArgumentException("Invalid UDP port : " + udpPort);
+        }
 
-        System.out.println("UDP socket bound to " + ownIP + " : " + udpSocket);
+        try {
+            udpSocket = new DatagramSocket(new InetSocketAddress(localAddress, udpPort));
+        } catch (SocketException e) {
+            throw new IOException("Cannot bind UDP socket to " + ownIP + " : " + udpPort
+                + " (" + e.getMessage() + ")", e);
+        }
+        System.out.println("UDP socket bound to " + ownIP + " : " + udpPort);
     }
 
     private void connectToOracle() throws IOException {
@@ -57,36 +106,6 @@ public class vn {
         out.flush();
 
         System.out.println("Sent 6-byte CONNECT message");
-    }
-    private void sendTestMessage() throws IOException {
-        OutputStream out = tcpSocket.getOutputStream();
-        out.write("HELLO FROM VN\n".getBytes());
-        out.flush();
-        System.out.println("Sent test message to ON");
-    }
-    public void start() throws IOException {
-        try {
-            initializeUDP();
-            connectToOracle();
-            sendConnect();
-
-            System.out.println(
-                    "CONNECT sent. Waiting for the ON implementation "
-                    + "to support LINK-STATE responses.");
-            // Your current on.cpp never sends a response.
-            // Implement the receive/decode loop after adding
-            // LINK-STATE sending to the ON.
-            sendTestMessage(); // temporary connection test
-
-            System.out.println("Test message sent.");
-        } finally {
-            if (tcpSocket != null) {
-                tcpSocket.close();
-            }
-            if (udpSocket != null) {
-                udpSocket.close();
-            }
-        }
     }
 
     public static void main(String[] args) {
