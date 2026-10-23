@@ -108,6 +108,76 @@ public class vn {
         System.out.println("Sent 6-byte CONNECT message");
     }
 
+    // LINK-STATE MESSAGE
+    private void oracleLoop() throws IOException {
+        DataInputStream in = new DataInputStream(tcpSocket.getInputStream());
+
+        while (true) {
+            int len;
+            try {
+                len = in.readInt();
+            } catch (EOFException e) {
+                System.out.println("Oracle closed the connection");
+                return;
+            }
+            if(len < 0 || len % TUPLE_SIZE != 0 || len > 65535) {
+                throw new IOException("Malformed LINK_STATE MESSAGE (length " + len + ")");
+            }
+            byte[] payload = new byte[len];
+            in.readFully(payload);
+            handleLinkState(payload);
+        }
+    }
+
+    private List<Entry> parseEntries(ByteBuffer buf, int count) {
+        List<Entry> list = new ArrayList<>();
+        for (int i = 0; i < count; i++){
+            char id = (char) (buf.get() & 0xFF);
+            byte[] ip = new byte[4];
+            buf.get(ip);
+            int port = buf.getShort() & 0xFFFF;
+            int cost = buf.getShort() & 0xFFFF;
+            list.add(new Entry(id, ip, port, cost));
+        }
+        return list;
+    }
+
+    private void handleLinkState(byte[] payload) {
+        ByteBuffer buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
+        List<Entry> entries = parseEntries(buf, payload.length / TUPLE_SIZE);
+
+        StringBuilder sb = new StringBuilder();
+        for(Entry e : entries) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(e.id).append('=').append(e.cost);
+        }
+
+        System.out.println("LINK_STATE : " + sb);
+
+        synchronized (lock) {
+            Map<Character, Integer> links = new TreeMap<>();
+            for (Entry e : entries) {
+                try {
+                    addrs.put(e.id, e.address());
+                } catch (UnknownHostException ex) {}
+
+                if (e.cost == 0) {
+                    myId = e.id;
+                } else {
+                    links.put(e.id, e.cost);
+                }
+            }
+
+            if(myId == 0) {
+                System.err.println("LINK-STATE contained no self tuple");
+                return;
+            }
+            myEntries = entries;
+            graph.put(myId, links);
+        }
+        floodOwnLsp();
+    }
+
     public static void main(String[] args) {
         if (args.length != 3) {
             System.err.println(
