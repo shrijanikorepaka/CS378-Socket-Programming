@@ -104,6 +104,8 @@ int main(int argc,char *argv[])
         cerr<<"Socket creation failed"<<endl;
         return 1;
     }
+    int opt = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     struct sockaddr_in my_addr{};
 
     my_addr.sin_family = AF_INET;
