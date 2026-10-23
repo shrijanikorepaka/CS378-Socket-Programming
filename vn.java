@@ -178,6 +178,115 @@ public class vn {
         floodOwnLsp();
     }
 
+    // LSP
+
+    private byte[] buildLsp(int seq) {
+        ByteBuffer buf = ByteBuffer.allocate(LSP_HEADER_SIZE + TUPLE_SIZE * myEntries.size());
+        buf.order(ByteOrder.BIG_ENDIAN);
+        buf.put((byte) myId);
+        buf.putInt(seq);
+        buf.putShort((short) myEntries.size());
+        for (Entry e : myEntries) {
+            buf.put((byte) e.id);
+            buf.put(e.ip);
+            buf.putShort((short) e.port);
+            buf.putShort((short) e.cost);
+        }
+        return buf.array();
+    }
+
+    private void floodOwnLsp() {
+        byte[] data;
+        List<InetSocketAddress> targets = new ArrayList<>();
+        synchronized (lock) {
+            if (myId == 0) return;
+            mySeq++;
+            lastSeq.put(myId, mySeq);
+            data = buildLsp(mySeq);
+
+            for (Entry e : myEntries) {
+                if (e.cost > 0) {
+                    InetSocketAddress a = addrs.get(e.id);
+                    if (a != null) targets.add(a);
+                }
+            }
+        }
+
+        for (InetSocketAddress t : targets) {
+            sendUdp(data, t);
+        }
+    }
+
+    private void sendUdp (byte[] data, InetSocketAddress target) {
+        for (int i = 0; i < LSP_COPIES; i++) {
+            try {
+                udpSocket.send(new DatagramPacket(data, data.length, target));
+            } catch (IOException e) {
+                System.err.println("UDP send to " + target + " failed : " + e.getMessage());
+            }
+        }
+    }
+
+    private void udpLoop() {
+        byte[] buffer = new byte[4096];
+        while (!udpSocket.isClosed()) {
+            DatagramPacket pkt = new DatagramPacket(buffer, buffer.length);
+            try {
+                udpSocket.receive(pkt);
+            } catch (IOException e) {
+                if (!udpSocket.isClosed()) {
+                    System.err.println("UDP recieve error : " + e.getMessage());
+                }
+                return;
+            }
+            try {
+                handleLSP(Arrays.copyOf(pkt.getData(), pkt.getLength()),
+                    new InetSocketAddress(pkt.getAddress(), pkt.getPort()));
+            } catch (RuntimeException e) {
+                System.err.println("Dropped malformed LSP : " + e.getMessage());
+            }
+        }
+    }
+
+    private void handleLSP(byte[] data, InetSocketAddress sender) {
+        if (data.length < LSP_HEADER_SIZE) return;
+
+        ByteBuffer buf = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN);
+        char origin = (char) (buf.get() & 0xFF);
+        int seq = buf.getInt();
+        int count = buf.getShort() & 0xFFFF;
+        if (data.length != LSP_HEADER_SIZE + count * TUPLE_SIZE) return;
+
+        List<Entry> entries = parseEntries(buf, count);
+        List<InetSocketAddress> targets = new ArrayList<>();
+
+        synchronized (lock) {
+            if (origin == myId) return;
+            Integer last = lastSeq.get(origin);
+            if (last != null && seq <= last) return;
+            lastSeq.put(origin, seq);
+
+            Map<Character, Integer> links = new TreeMap<>();
+            for (Entry e : entries) {
+                try {
+                    addrs.put(e.id, e.address());
+                } catch (UnknownHostException ex) {}
+                if (e.cost > 0) links.put(e.id, e.cost);
+            }
+            graph.put(origin, links);
+
+            for (Entry e : myEntries) {
+                if (e.cost > 0) {
+                    InetSocketAddress a = addrs.get(e.id);
+                    if (a != null && !a.equals(sender)) targets.add(a);
+                }
+            }
+        }
+        for (InetSocketAddress t : targets) {
+            sendUdp(data, t);
+        }
+    }
+
     public static void main(String[] args) {
         if (args.length != 3) {
             System.err.println(
