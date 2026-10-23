@@ -287,20 +287,103 @@ public class vn {
         }
     }
 
+    private void periodicLoop() {
+        while (true) {
+            try {
+                Thread.sleep(LSP_PERIOD_MS);
+            } catch (InterruptedException e) {
+                return;
+            }
+            floodOwnLsp();
+            printGraph();
+        }
+    }
+
+    private void printGraph() {
+        synchronized (lock) {
+            if (graph.isEmpty()) return;
+
+            int max = 'A';
+            for (Map.Entry<Character, Map<Character, Integer>> e : graph.entrySet()) {
+                max = Math.max(max, e.getKey());
+                for (char n : e.getValue().keySet()) max = Math.max(max, n);
+            }
+            int n = max - 'A' + 1;
+            if (n < 2) return;
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("--- Known topology at VN ").append(myId).append(" ---\n");
+            for (int i = 0; i < n - 1; i++) {
+                for (int j = i + 1; j < n; j++) {
+                    char a = (char) ('A' + i);
+                    char b = (char) ('A' + j);
+                    Integer c = null;
+                    if (graph.containsKey(a)) c = graph.get(a).get(b);
+                    if (c == null && graph.containsKey(b)) c = graph.get(b).get(a);
+                    sb.append(c == null ? -1 : c);
+                    if (j < n - 1) sb.append('\t');
+                }
+                sb.append('\n');
+            }
+            System.out.print(sb);
+            System.out.flush();
+        }
+    }
+
+    // Main
+    public void start() throws IOException {
+        try {
+            initializeUDP();
+            connectToOracle();
+            sendConnect();
+
+            Thread udpThread = new Thread(this::udpLoop, "udp-receiver");
+            udpThread.setDaemon(true);
+            udpThread.start();
+
+            Thread periodic = new Thread(this::periodicLoop, "periodic");
+            periodic.setDaemon(true);
+            periodic.start();
+
+            oracleLoop();
+        } finally {
+            if (tcpSocket != null) tcpSocket.close();
+            if (udpSocket != null) udpSocket.close();
+        }
+    }
+
+    private static String detectOwnIP(String oracleAddr) throws IOException {
+        int colon = oracleAddr.lastIndexOf(':');
+        String host = colon > 0 ? oracleAddr.substring(0, colon) : oracleAddr;
+        try (DatagramSocket s = new DatagramSocket()) {
+            s.connect(InetAddress.getByName(host), ORACLE_PORT);
+            return s.getLocalAddress().getHostAddress();
+        }
+    }
+
     public static void main(String[] args) {
-        if (args.length != 3) {
-            System.err.println(
-                    "Usage: java VN <oracle-ip> <own-ip> <udp-port>");
+        if (args.length != 2 && args.length != 3) {
+            System.err.println("Usage: java VN <oracle-ip> <own-ip> <udp-port>");
+            System.err.println("   or: java vn <oracle-ip> <udp-port>");
             System.exit(1);
         }
 
         try {
-            int port = Integer.parseInt(args[2]);
+            String oracleIP = args[0];
+            String ownIP;
+            int port;
+            if (args.length == 3) {
+                ownIP = args[1];
+                port = Integer.parseInt(args[2]);
+            } else {
+                port = Integer.parseInt(args[1]);
+                ownIP = detectOwnIP(oracleIP);
+            }
 
-            vn vn = new vn(args[0], args[1], port);
-            vn.start();
+            new vn(oracleIP, ownIP, port).start();
         } catch (IOException | IllegalArgumentException e) {
             System.err.println("VN error: " + e.getMessage());
+            System.exit(1);
         }
     }
 }
